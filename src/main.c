@@ -20,6 +20,7 @@
 #include <bps/screen.h>
 #include <fcntl.h>
 #include <screen/screen.h>
+#include <inttypes.h>
 
 #include <stdlib.h>
 #include "libavutil/adler32.h"
@@ -27,12 +28,76 @@
 #include "libavutil/lfg.h"
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
+#include "libavutil/aes_ctr.h"
+//#include "libavutil/audio_fifo.c"
+
+static const DECLARE_ALIGNED(8, uint8_t, plain) [] = { 0x6d, 0x6f, 0x73, 0x74, 0x20, 0x72, 0x61,
+        0x6e, 0x64, 0x6f, 0x6d };
+static DECLARE_ALIGNED(8, uint8_t, tmp) [11];
+
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
+
+#include "bbutil.h"
 
 static bool shutdown = false;
 
 #define LEN 7001
 
 static volatile int checksum;
+
+font_t* fontBold16;
+
+static screen_context_t screen_ctx;
+static int nScreenWidth, nScreenHeight;
+
+char text[100];
+
+//#define MAX_CHANNELS    32
+//
+//typedef struct TestStruct
+//{
+//    const enum AVSampleFormat format;
+//    const int nb_ch;
+//    void const *data_planes[MAX_CHANNELS];
+//    const int nb_samples_pch;
+//} TestStruct;
+//
+//static const uint8_t data_U8[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+//static const int16_t data_S16[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+//static const float data_FLT[] = { 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0 };
+//
+//static const TestStruct test_struct[] = { { .format = AV_SAMPLE_FMT_U8, .nb_ch = 1, .data_planes = {
+//        data_U8, }, .nb_samples_pch = 12 }, { .format = AV_SAMPLE_FMT_U8P, .nb_ch = 2,
+//        .data_planes = { data_U8, data_U8 + 6, }, .nb_samples_pch = 6 }, { .format =
+//        AV_SAMPLE_FMT_S16, .nb_ch = 1, .data_planes = { data_S16, }, .nb_samples_pch = 12 }, {
+//        .format = AV_SAMPLE_FMT_S16P, .nb_ch = 2, .data_planes = { data_S16, data_S16 + 6, },
+//        .nb_samples_pch = 6 }, { .format = AV_SAMPLE_FMT_FLT, .nb_ch = 1, .data_planes =
+//        { data_FLT, }, .nb_samples_pch = 12 }, { .format = AV_SAMPLE_FMT_FLTP, .nb_ch = 2,
+//        .data_planes = { data_FLT, data_FLT + 6, }, .nb_samples_pch = 6 } };
+
+int initialize()
+{
+    int dpi = bbutil_calculate_dpi(screen_ctx);
+
+    if (dpi == EXIT_FAILURE) {
+        fprintf(stderr, "init(): Unable to calculate dpi\n");
+        return EXIT_FAILURE;
+    }
+    //As bbutil renders text using device-specifc dpi, we need to compute a point size
+    //for the font, so that the text string fits into the bubble. Note that Playbook is used
+    //as a reference point in this equation as we know that at dpi of 170, font with point size of
+    //15 fits into the bubble texture.
+    int point_size16 = (int) (16.0f / ((float) dpi / 170.0f));
+
+    fontBold16 = bbutil_load_font("/usr/fonts/font_repository/monotype/arial.ttf", point_size16,
+            dpi);
+    if (!fontBold16) {
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
 
 /**
  * Use the PID to set the window group id.
@@ -128,6 +193,7 @@ int test_adler32(int argc, char **argv)
     }
 
     av_log(NULL, AV_LOG_DEBUG, "%X (expected 50E6E508)\n", checksum);
+    sprintf(text, "%X (expected 50E6E508)", checksum);
     return checksum == 0x50e6e508 ? 0 : 1;
 }
 
@@ -213,48 +279,288 @@ int test_aes(int argc, char **argv)
     return err;
 }
 
-int main(int argc, char **argv)
+int test_aes_ctr()
 {
-    const int usage = SCREEN_USAGE_NATIVE;
+    int ret = 1;
+    struct AVAESCTR *ae, *ad;
+    const uint8_t *iv;
 
-    screen_context_t screen_ctx;
-    screen_window_t screen_win;
-    screen_buffer_t screen_buf = NULL;
-    int rect[4] = { 0, 0, 0, 0 };
+    ae = av_aes_ctr_alloc();
+    ad = av_aes_ctr_alloc();
 
-    /* Setup the window */
-    screen_create_context(&screen_ctx, 0);
-    screen_create_window(&screen_win, screen_ctx);
-    screen_create_window_group(screen_win, get_window_group_id());
-    screen_set_window_property_iv(screen_win, SCREEN_PROPERTY_USAGE, &usage);
-    screen_create_window_buffers(screen_win, 1);
+    if (!ae || !ad)
+        goto ERROR;
 
-    screen_get_window_property_pv(screen_win, SCREEN_PROPERTY_RENDER_BUFFERS,
-            (void **) &screen_buf);
-    screen_get_window_property_iv(screen_win, SCREEN_PROPERTY_BUFFER_SIZE, rect + 2);
+    if (av_aes_ctr_init(ae, (const uint8_t*) "0123456789abcdef") < 0)
+        goto ERROR;
 
-    /* Fill the screen buffer with blue */
-    int attribs[] = { SCREEN_BLIT_COLOR, 0xff0000ff, SCREEN_BLIT_END };
-    screen_fill(screen_ctx, screen_buf, attribs);
-    screen_post_window(screen_win, screen_buf, 1, rect, 0);
+    if (av_aes_ctr_init(ad, (const uint8_t*) "0123456789abcdef") < 0)
+        goto ERROR;
 
-    /* Signal bps library that navigator and screen events will be requested */
-    bps_initialize();
-    screen_request_events(screen_ctx);
-    navigator_request_events(0);
+    av_aes_ctr_set_random_iv(ae);
+    iv = av_aes_ctr_get_iv(ae);
+    av_aes_ctr_set_full_iv(ad, iv);
 
-    test_adler32(argc, argv);
-    test_aes(argc, argv);
+    av_aes_ctr_crypt(ae, tmp, plain, sizeof(tmp));
+    av_aes_ctr_crypt(ad, tmp, tmp, sizeof(tmp));
 
-    while (!shutdown) {
-        /* Handle user input */
-        handle_event();
+    if (memcmp(tmp, plain, sizeof(tmp)) != 0) {
+        av_log(NULL, AV_LOG_ERROR, "test failed\n");
+        goto ERROR;
     }
 
-    /* Clean up */
+    av_log(NULL, AV_LOG_INFO, "test passed\n");
+    ret = 0;
+
+    ERROR: av_aes_ctr_free(ae);
+    av_aes_ctr_free(ad);
+    return ret;
+}
+
+//static void free_data_planes(AVAudioFifo *afifo, void **output_data)
+//{
+//    int i;
+//    for (i = 0; i < afifo->nb_buffers; ++i) {
+//        av_freep(&output_data[i]);
+//    }
+//    av_freep(&output_data);
+//}
+//
+//static void ERROR(const char *str)
+//{
+//    fprintf(stderr, "%s\n", str);
+//    exit(1);
+//}
+//
+//static void print_audio_bytes(const TestStruct *test_sample, void **data_planes, int nb_samples)
+//{
+//    int p, b, f;
+//    int byte_offset = av_get_bytes_per_sample(test_sample->format);
+//    int buffers = av_sample_fmt_is_planar(test_sample->format) ? test_sample->nb_ch : 1;
+//    int line_size =
+//            (buffers > 1) ?
+//                    nb_samples * byte_offset : nb_samples * byte_offset * test_sample->nb_ch;
+//    for (p = 0; p < buffers; ++p) {
+//        for (b = 0; b < line_size; b += byte_offset) {
+//            for (f = 0; f < byte_offset; f++) {
+//                int order = !HAVE_BIGENDIAN ? (byte_offset - f - 1) : f;
+//                printf("%02x", *((uint8_t*) data_planes[p] + b + order));
+//            }
+//            putchar(' ');
+//        }
+//        putchar('\n');
+//    }
+//}
+//
+//static int read_samples_from_audio_fifo(AVAudioFifo* afifo, void ***output, int nb_samples)
+//{
+//    int i;
+//    int samples = FFMIN(nb_samples, afifo->nb_samples);
+//    int tot_elements =
+//            !av_sample_fmt_is_planar(afifo->sample_fmt) ? samples : afifo->channels * samples;
+//    void **data_planes = av_malloc_array(afifo->nb_buffers, sizeof(void*));
+//    if (!data_planes)
+//        ERROR("failed to allocate memory!");
+//    if (*output)
+//        free_data_planes(afifo, *output);
+//    *output = data_planes;
+//
+//    for (i = 0; i < afifo->nb_buffers; ++i) {
+//        data_planes[i] = av_malloc_array(tot_elements, afifo->sample_size);
+//        if (!data_planes[i])
+//            ERROR("failed to allocate memory!");
+//    }
+//
+//    return av_audio_fifo_read(afifo, *output, nb_samples);
+//}
+//
+//static int write_samples_to_audio_fifo(AVAudioFifo* afifo, const TestStruct *test_sample,
+//        int nb_samples, int offset)
+//{
+//    int offset_size, i;
+//    void *data_planes[MAX_CHANNELS];
+//
+//    if (nb_samples > test_sample->nb_samples_pch - offset) {
+//        return 0;
+//    }
+//    if (offset >= test_sample->nb_samples_pch) {
+//        return 0;
+//    }
+//    offset_size = offset * afifo->sample_size;
+//
+//    for (i = 0; i < afifo->nb_buffers; ++i) {
+//        data_planes[i] = (uint8_t*) test_sample->data_planes[i] + offset_size;
+//    }
+//
+//    return av_audio_fifo_write(afifo, data_planes, nb_samples);
+//}
+//
+//static void test_function(const TestStruct *test_sample)
+//{
+//    int ret, i;
+//    void **output_data = NULL;
+//    AVAudioFifo *afifo = av_audio_fifo_alloc(test_sample->format, test_sample->nb_ch,
+//            test_sample->nb_samples_pch);
+//    if (!afifo) {
+//        ERROR("ERROR: av_audio_fifo_alloc returned NULL!");
+//    }
+//    ret = write_samples_to_audio_fifo(afifo, test_sample, test_sample->nb_samples_pch, 0);
+//    if (ret < 0) {
+//        ERROR("ERROR: av_audio_fifo_write failed!");
+//    }
+//    printf("written: %d\n", ret);
+//
+//    ret = write_samples_to_audio_fifo(afifo, test_sample, test_sample->nb_samples_pch, 0);
+//    if (ret < 0) {
+//        ERROR("ERROR: av_audio_fifo_write failed!");
+//    }
+//    printf("written: %d\n", ret);
+//    printf("remaining samples in audio_fifo: %d\n\n", av_audio_fifo_size(afifo));
+//
+//    ret = read_samples_from_audio_fifo(afifo, &output_data, test_sample->nb_samples_pch);
+//    if (ret < 0) {
+//        ERROR("ERROR: av_audio_fifo_read failed!");
+//    }
+//    printf("read: %d\n", ret);
+//    print_audio_bytes(test_sample, output_data, ret);
+//    printf("remaining samples in audio_fifo: %d\n\n", av_audio_fifo_size(afifo));
+//
+//    /* test av_audio_fifo_peek */
+//    ret = av_audio_fifo_peek(afifo, output_data, afifo->nb_samples);
+//    if (ret < 0) {
+//        ERROR("ERROR: av_audio_fifo_peek failed!");
+//    }
+//    printf("peek:\n");
+//    print_audio_bytes(test_sample, output_data, ret);
+//    printf("\n");
+//
+//    /* test av_audio_fifo_peek_at */
+//    printf("peek_at:\n");
+//    for (i = 0; i < afifo->nb_samples; ++i) {
+//        ret = av_audio_fifo_peek_at(afifo, output_data, 1, i);
+//        if (ret < 0) {
+//            ERROR("ERROR: av_audio_fifo_peek_at failed!");
+//        }
+//        printf("%d:\n", i);
+//        print_audio_bytes(test_sample, output_data, ret);
+//    }
+//    printf("\n");
+//
+//    /* test av_audio_fifo_drain */
+//    ret = av_audio_fifo_drain(afifo, afifo->nb_samples);
+//    if (ret < 0) {
+//        ERROR("ERROR: av_audio_fifo_drain failed!");
+//    }
+//    if (afifo->nb_samples) {
+//        ERROR("drain failed to flush all samples in audio_fifo!");
+//    }
+//
+//    /* deallocate */
+//    free_data_planes(afifo, output_data);
+//    av_audio_fifo_free(afifo);
+//}
+
+//int test_audio_fifo()
+//{
+//    int t, tests = sizeof(test_struct) / sizeof(test_struct[0]);
+//
+//    for (t = 0; t < tests; ++t) {
+//        printf("\nTEST: %d\n\n", t + 1);
+//        test_function(&test_struct[t]);
+//    }
+//}
+
+void render()
+{
+    // Increment the angle by 0.5 degrees
+    static float angle = 0.0f;
+    angle += 0.5f * M_PI / 180.0f;
+
+    //Typical render pass
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Draw text
+    bbutil_render_text_angle(fontBold16, text, nScreenWidth / 2, nScreenHeight / 2, 0.75f, 0.75f,
+            0.75f, 1.0f, angle);
+
+    bbutil_swap();
+}
+
+int main(int argc, char **argv)
+{
+    int exit_application = 0;
+
+    //Create a screen context that will be used to create an EGL surface to to receive libscreen events
+    screen_create_context(&screen_ctx, 0);
+    // Get display configuration (dimensions)
+    int count = 0;
+    screen_get_context_property_iv(screen_ctx, SCREEN_PROPERTY_DISPLAY_COUNT, &count);
+    screen_display_t *screen_disps = (screen_display_t *) calloc(count, sizeof(screen_display_t));
+    screen_get_context_property_pv(screen_ctx, SCREEN_PROPERTY_DISPLAYS, (void **) screen_disps);
+    screen_display_t screen_disp = screen_disps[0];
+    free(screen_disps);
+    int dims[2] = { 0, 0 };
+    screen_get_display_property_iv(screen_disp, SCREEN_PROPERTY_SIZE, dims);
+    nScreenWidth = dims[0];
+    nScreenHeight = dims[1];
+
+    //Initialize BPS library
+    bps_initialize();
+
+    //Use utility code to initialize EGL for rendering with GL ES 2.0
+    if (EXIT_SUCCESS != bbutil_init_egl(screen_ctx)) {
+        fprintf(stderr, "bbutil_init_egl failed\n");
+        bbutil_terminate();
+        screen_destroy_context(screen_ctx);
+        return 0;
+    }
+
+    //Initialize application logic
+    if (EXIT_SUCCESS != initialize()) {
+        fprintf(stderr, "initialize failed\n");
+        bbutil_terminate();
+        screen_destroy_context(screen_ctx);
+        bps_shutdown();
+        return 0;
+    }
+
+    test_adler32(argc, argv);
+    test_aes_ctr();
+
+    while (!exit_application) {
+        //Request and process all available BPS events
+        bps_event_t *event = NULL;
+
+        for (;;) {
+            if (BPS_SUCCESS != bps_get_event(&event, 0)) {
+                fprintf(stderr, "bps_get_event failed\n");
+                break;
+            }
+
+            if (event) {
+                int domain = bps_event_get_domain(event);
+
+                if ((domain == navigator_get_domain())
+                        && (NAVIGATOR_EXIT == bps_event_get_code(event))) {
+                    exit_application = 1;
+                }
+            } else {
+                break;
+            }
+        }
+        render();
+    }
+
+    //Stop requesting events from libscreen
     screen_stop_events(screen_ctx);
+
+    //Shut down BPS library for this process
     bps_shutdown();
-    screen_destroy_window(screen_win);
+
+    //Use utility code to terminate EGL setup
+    bbutil_terminate();
+
+    //Destroy libscreen context
     screen_destroy_context(screen_ctx);
     return 0;
 }
