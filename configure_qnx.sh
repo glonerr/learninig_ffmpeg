@@ -1,0 +1,1 @@
+./configure --enable-cross-compile --cross-prefix=/home/lonerr/Tools/worktools/bbndk/host_10_3_1_12/linux/x86/usr/bin/arm-unknown-nto-qnx8.0.0eabi- --arch=armv7 --disable-debug --enable-optimizations --enable-asm --disable-static --enable-shared --target-os=qnx --disable-ffplay --disable-ffprobe --prefix=`pwd`/target --cpu=cortex-a8
