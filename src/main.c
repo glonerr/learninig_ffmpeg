@@ -23,13 +23,15 @@
 #include <inttypes.h>
 
 #include <stdlib.h>
-#include "libavutil/adler32.h"
 #include "libavutil/aes.h"
 #include "libavutil/lfg.h"
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
+#include "libavutil/adler32.h"
 #include "libavutil/aes_ctr.h"
-//#include "libavutil/audio_fifo.c"
+//#include "libavutil/audio_fifo.h"
+#include "libavutil/avstring.h"
+#include "libavutil/base64.h"
 
 static const DECLARE_ALIGNED(8, uint8_t, plain) [] = { 0x6d, 0x6f, 0x73, 0x74, 0x20, 0x72, 0x61,
         0x6e, 0x64, 0x6f, 0x6d };
@@ -325,13 +327,13 @@ int test_aes_ctr()
 //    }
 //    av_freep(&output_data);
 //}
-//
-//static void ERROR(const char *str)
-//{
-//    fprintf(stderr, "%s\n", str);
-//    exit(1);
-//}
-//
+
+static void ERROR(const char *str)
+{
+    fprintf(stderr, "%s\n", str);
+    exit(1);
+}
+
 //static void print_audio_bytes(const TestStruct *test_sample, void **data_planes, int nb_samples)
 //{
 //    int p, b, f;
@@ -351,7 +353,7 @@ int test_aes_ctr()
 //        putchar('\n');
 //    }
 //}
-//
+
 //static int read_samples_from_audio_fifo(AVAudioFifo* afifo, void ***output, int nb_samples)
 //{
 //    int i;
@@ -373,7 +375,7 @@ int test_aes_ctr()
 //
 //    return av_audio_fifo_read(afifo, *output, nb_samples);
 //}
-//
+
 //static int write_samples_to_audio_fifo(AVAudioFifo* afifo, const TestStruct *test_sample,
 //        int nb_samples, int offset)
 //{
@@ -394,7 +396,7 @@ int test_aes_ctr()
 //
 //    return av_audio_fifo_write(afifo, data_planes, nb_samples);
 //}
-//
+
 //static void test_function(const TestStruct *test_sample)
 //{
 //    int ret, i;
@@ -459,7 +461,7 @@ int test_aes_ctr()
 //    free_data_planes(afifo, output_data);
 //    av_audio_fifo_free(afifo);
 //}
-
+//
 //int test_audio_fifo()
 //{
 //    int t, tests = sizeof(test_struct) / sizeof(test_struct[0]);
@@ -469,6 +471,180 @@ int test_aes_ctr()
 //        test_function(&test_struct[t]);
 //    }
 //}
+
+int test_avstring()
+{
+    int i;
+    char *fullpath, *ptr;
+    static const char * const strings[] = { "''", "", ":", "\\", "'", "    ''    :",
+            "    ''  ''  :", "foo   '' :", "'foo'", "foo     ", "  '  foo  '  ", "foo\\",
+            "foo':  blah:blah", "foo\\:  blah:blah", "foo\'", "'foo :  '  :blahblah", "\\ :blah",
+            "     foo", "      foo       ", "      foo     \\ ", "foo ':blah",
+            " foo   bar    :   blahblah", "\\f\\o\\o", "'foo : \\ \\  '   : blahblah",
+            "'\\fo\\o:': blahblah", "\\'fo\\o\\:':  foo  '  :blahblah" };
+    const char *haystack = "Education consists mainly in what we have unlearned.";
+    const char * const needle[] = { "learned.", "unlearned.", "Unlearned" };
+
+    av_log(NULL, AV_LOG_DEBUG, "Testing av_get_token()\n");
+    for (i = 0; i < FF_ARRAY_ELEMS(strings); i++) {
+        const char *p = strings[i];
+        char *q;
+        printf("|%s|", p);
+        q = av_get_token(&p, ":");
+        av_log(NULL, AV_LOG_DEBUG, " -> |%s|", q);
+        av_log(NULL, AV_LOG_DEBUG, " + |%s|\n", p);
+        av_free(q);
+    }
+
+    printf("Testing av_append_path_component()\n");
+#define TEST_APPEND_PATH_COMPONENT(path, component, expected) \
+            fullpath = av_append_path_component((path), (component)); \
+            av_log(NULL, AV_LOG_DEBUG, "%s = %s\n", fullpath ? fullpath : "(null)", expected); \
+            av_free(fullpath);
+    TEST_APPEND_PATH_COMPONENT(NULL, NULL, "(null)")
+    TEST_APPEND_PATH_COMPONENT("path", NULL, "path");
+    TEST_APPEND_PATH_COMPONENT(NULL, "comp", "comp");
+    TEST_APPEND_PATH_COMPONENT("path", "comp", "path/comp");
+    TEST_APPEND_PATH_COMPONENT("path/", "comp", "path/comp");
+    TEST_APPEND_PATH_COMPONENT("path", "/comp", "path/comp");
+    TEST_APPEND_PATH_COMPONENT("path/", "/comp", "path/comp");
+    TEST_APPEND_PATH_COMPONENT("path/path2/", "/comp/comp2", "path/path2/comp/comp2");
+
+    /*Testing av_strnstr()*/
+#define TEST_STRNSTR(haystack, needle, hay_length, expected) \
+            ptr = av_strnstr(haystack, needle, hay_length); \
+            if (ptr != expected){ \
+                av_log(NULL, AV_LOG_DEBUG, "expected: %p, received %p\n", expected, ptr); \
+            }
+    TEST_STRNSTR(haystack, needle[0], strlen(haystack), haystack + 44);
+    TEST_STRNSTR(haystack, needle[1], strlen(haystack), haystack + 42);
+    TEST_STRNSTR(haystack, needle[2], strlen(haystack), NULL);
+    TEST_STRNSTR(haystack, strings[1], strlen(haystack), haystack);
+
+    /*Testing av_strireplace()*/
+#define TEST_STRIREPLACE(haystack, needle, expected) \
+            ptr = av_strireplace(haystack, needle, "instead"); \
+            if (ptr == NULL) { \
+                av_log(NULL, AV_LOG_DEBUG, "error, received null pointer!\n"); \
+            } else { \
+                if (strcmp(ptr, expected) != 0) \
+                av_log(NULL, AV_LOG_DEBUG,  "expected: %s, received: %s\n", expected, ptr); \
+                av_free(ptr); \
+            }
+
+    TEST_STRIREPLACE(haystack, needle[0], "Education consists mainly in what we have uninstead");
+    TEST_STRIREPLACE(haystack, needle[1], "Education consists mainly in what we have instead");
+    TEST_STRIREPLACE(haystack, needle[2], "Education consists mainly in what we have instead.");
+    TEST_STRIREPLACE(haystack, needle[1], "Education consists mainly in what we have instead");
+
+    /*Testing av_d2str()*/
+#define TEST_D2STR(value, expected) \
+            if((ptr = av_d2str(value)) == NULL){ \
+                av_log(NULL, AV_LOG_DEBUG, "error, received null pointer!\n"); \
+            } else { \
+                if(strcmp(ptr, expected) != 0) \
+                av_log(NULL, AV_LOG_DEBUG,  "expected: %s, received: %s\n", expected, ptr); \
+                av_free(ptr); \
+            }
+    TEST_D2STR(0, "0.000000");
+    TEST_D2STR(-1.2333234, "-1.233323");
+    TEST_D2STR(-1.2333237, "-1.233324");
+    return 0;
+}
+
+static int test_encode_decode(const uint8_t *data, unsigned int data_size, const char *encoded_ref)
+{
+#define MAX_DATA_SIZE    1024
+#define MAX_ENCODED_SIZE 2048
+    char encoded[MAX_ENCODED_SIZE];
+    uint8_t data2[MAX_DATA_SIZE];
+    int data2_size, max_data2_size = MAX_DATA_SIZE;
+
+    if (!av_base64_encode(encoded, MAX_ENCODED_SIZE, data, data_size)) {
+        printf("Failed: cannot encode the input data\n");
+        return 1;
+    }
+    if (encoded_ref && strcmp(encoded, encoded_ref)) {
+        printf("Failed: encoded string differs from reference\n"
+                "Encoded:\n%s\nReference:\n%s\n", encoded, encoded_ref);
+        return 1;
+    }
+
+    if ((data2_size = av_base64_decode(data2, encoded, max_data2_size)) != data_size) {
+        printf("Failed: cannot decode the encoded string\n"
+                "Encoded:\n%s\n", encoded);
+        return 1;
+    }
+    if ((data2_size = av_base64_decode(data2, encoded, data_size)) != data_size) {
+        printf("Failed: cannot decode with minimal buffer\n"
+                "Encoded:\n%s\n", encoded);
+        return 1;
+    }
+    if (memcmp(data2, data, data_size)) {
+        printf("Failed: encoded/decoded data differs from original data\n");
+        return 1;
+    }
+    if (av_base64_decode(NULL, encoded, 0) != 0) {
+        printf("Failed: decode to NULL buffer\n");
+        return 1;
+    }
+    if (strlen(encoded)) {
+        char *end = strchr(encoded, '=');
+        if (!end)
+            end = encoded + strlen(encoded) - 1;
+        *end = '%';
+        if (av_base64_decode(NULL, encoded, 0) >= 0) {
+            printf("Failed: error detection\n");
+            return 1;
+        }
+    }
+
+    printf("Passed!\n");
+    return 0;
+}
+
+int test_base64(int argc, char** argv)
+{
+    int i, error_count = 0;
+    struct test
+    {
+        const uint8_t *data;
+        const char *encoded_ref;
+    } tests[] = { { "", "" }, { "1", "MQ==" }, { "22", "MjI=" }, { "333", "MzMz" }, { "4444",
+            "NDQ0NA==" }, { "55555", "NTU1NTU=" }, { "666666", "NjY2NjY2" }, { "abc:def",
+            "YWJjOmRlZg==" }, };
+    char in[1024], out[2048];
+
+    printf("Encoding/decoding tests\n");
+    for (i = 0; i < FF_ARRAY_ELEMS(tests); i++)
+        error_count += test_encode_decode(tests[i].data, strlen(tests[i].data),
+                tests[i].encoded_ref);
+
+    if (argc > 1 && !strcmp(argv[1], "-t")) {
+        memset(in, 123, sizeof(in));
+        for (i = 0; i < 10000; i++) {
+            START_TIMER
+            av_base64_encode(out, sizeof(out), in, sizeof(in));
+            STOP_TIMER("encode")
+        }
+        for (i = 0; i < 10000; i++) {
+            START_TIMER
+            av_base64_decode(in, out, sizeof(in));
+            STOP_TIMER("decode")
+        }
+
+        for (i = 0; i < 10000; i++) {
+            START_TIMER
+            av_base64_decode(NULL, out, 0);
+            STOP_TIMER("syntax check")
+        }
+    }
+
+    if (error_count)
+        printf("Error Count: %d.\n", error_count);
+
+    return !!error_count;
+}
 
 void render()
 {
@@ -525,7 +701,13 @@ int main(int argc, char **argv)
     }
 
     test_adler32(argc, argv);
-    test_aes_ctr();
+//    test_aes_ctr();
+//    test_audio_fifo();
+//    test_avstring();
+    char *a[2];
+    a[0] = argv[0];
+    a[1] = "this is a test";
+    test_base64(2, a);
 
     while (!exit_application) {
         //Request and process all available BPS events

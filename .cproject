@@ -35,7 +35,10 @@
 									<listOptionValue builtIn="false" value="_FORTIFY_SOURCE=2"/>
 									<listOptionValue builtIn="false" value="USING_GL20"/>
 								</option>
-								<option id="com.qnx.qcc.option.compiler.qccoptions.704630637" name="QCC Options" superClass="com.qnx.qcc.option.compiler.qccoptions"/>
+								<option id="com.qnx.qcc.option.compiler.qccoptions.704630637" name="QCC Options" superClass="com.qnx.qcc.option.compiler.qccoptions" valueType="stringList">
+									<listOptionValue builtIn="false" value="-Wno-pointer-to-int-cast -Wempty-body -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign"/>
+									<listOptionValue builtIn="false" value="-std=c99"/>
+								</option>
 								<inputType id="com.qnx.qcc.inputType.compiler.517494012" superClass="com.qnx.qcc.inputType.compiler"/>
 							</tool>
 							<tool id="com.qnx.qcc.tool.assembler.1437244847" name="QCC Assembler" superClass="com.qnx.qcc.tool.assembler">
